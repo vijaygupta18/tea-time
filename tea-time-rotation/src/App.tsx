@@ -35,6 +35,7 @@ interface User {
   total_drinks_bought: number;
   drink_count: number;
   last_assigned_at: string | null;
+  isActive: boolean;
 }
 
 function App() {
@@ -63,6 +64,7 @@ function App() {
     const { data } = await supabase
       .from('users')
       .select('name, drink_count, total_drinks_bought')
+      .eq('isActive', true)
       .order('drink_count', { ascending: false, nullsFirst: false })
       .order('name', { ascending: true })
       .limit(3);
@@ -75,6 +77,7 @@ function App() {
     const { data } = await supabase
       .from('users')
       .select('name, total_drinks_bought, drink_count')
+      .eq('isActive', true)
       .order('total_drinks_bought', { ascending: false, nullsFirst: false })
       .order('name', { ascending: true })
       .limit(3);
@@ -102,16 +105,18 @@ function App() {
         return;
       }
 
-      // Get sponsor rank (count users with more drinks bought)
+      // Get sponsor rank (count active users with more drinks bought)
       const { count: sponsorsAbove } = await supabase
         .from('users')
         .select('*', { count: 'exact', head: true })
+        .eq('isActive', true)
         .gt('total_drinks_bought', userData.total_drinks_bought || 0);
 
-      // Get drinker rank (count users with more drinks consumed)
+      // Get drinker rank (count active users with more drinks consumed)
       const { count: drinkersAbove } = await supabase
         .from('users')
         .select('*', { count: 'exact', head: true })
+        .eq('isActive', true)
         .gt('drink_count', userData.drink_count || 0);
 
       setCurrentUserStats({
@@ -129,7 +134,7 @@ function App() {
     const fetchAllData = async (currentSession: Session) => {
       const [ordersData, usersData] = await Promise.all([
         supabase.from('orders').select('*').eq('session_id', currentSession.id),
-        supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, profile_picture_url, total_drinks_bought, drink_count, last_assigned_at, roles:user_roles(roles(name))').eq('isActive', true),
+supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, profile_picture_url, total_drinks_bought, drink_count, last_assigned_at, isActive, roles:user_roles(roles(name))'),
       ]);
       if (ordersData.data) setOrders(ordersData.data);
       if (usersData.data) {
@@ -235,7 +240,7 @@ function App() {
   const fetchAllData = async (currentSession: Session) => {
     const [ordersData, usersData] = await Promise.all([
       supabase.from('orders').select('*').eq('session_id', currentSession.id),
-      supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, profile_picture_url, total_drinks_bought, drink_count, last_assigned_at, roles:user_roles(roles(name))').eq('isActive', true),
+      supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, profile_picture_url, total_drinks_bought, drink_count, last_assigned_at, isActive, roles:user_roles(roles(name))'),
     ]);
     if (ordersData.data) setOrders(ordersData.data);
     if (usersData.data) {
@@ -296,6 +301,10 @@ function App() {
   };
 
   const handleStartSession = async () => {
+    if (!profile?.isActive) {
+      showError('Access Denied', 'We had a good time with you, but sadly, now you\'re outside our walled tea garden.');
+      return;
+    }
     const { data } = await supabase.from('sessions').insert([{ status: 'active' }]).select().single();
     setSession(data);
   };
@@ -320,6 +329,11 @@ function App() {
   const handleSummarizeSession = async () => {
     if (!session || !profile?.permissions.includes('can_summarize_session')) {
       showError('Permission Denied', 'You do not have permission to summarize the session.');
+      return;
+    }
+
+    if (!profile?.isActive) {
+      showError('Access Denied', 'We had a good time with you, but sadly, now you\'re outside our walled tea garden.');
       return;
     }
 

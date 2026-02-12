@@ -8,6 +8,7 @@ interface Profile {
   roles: string[];
   permissions: string[];
   profile_picture_url?: string;
+  isActive: boolean;
 }
 
 export const useAuth = () => {
@@ -67,6 +68,7 @@ export const useAuth = () => {
           id,
           name,
           profile_picture_url,
+          isActive,
           roles:user_roles(roles(name)),
           permissions:user_roles(roles(role_permissions(permission)))
         `)
@@ -88,6 +90,7 @@ export const useAuth = () => {
           roles: [],
           permissions: [],
           profile_picture_url: (user.user_metadata as Record<string, unknown> | undefined)?.picture as string | undefined,
+          isActive: true,
         });
         setLoading(false);
         return;
@@ -104,7 +107,7 @@ export const useAuth = () => {
         ).flatMap((p) =>
           p.roles.role_permissions.map((rp) => rp.permission)
         );
-        setProfile({ id: data.id, name: data.name || 'Guest', roles, permissions, profile_picture_url: data.profile_picture_url });
+        setProfile({ id: data.id, name: data.name || 'Guest', roles, permissions, profile_picture_url: data.profile_picture_url, isActive: data.isActive });
 
         // If the profile picture URL is empty, try to update it from the user's metadata
         if (!data.profile_picture_url && user.user_metadata?.picture) {

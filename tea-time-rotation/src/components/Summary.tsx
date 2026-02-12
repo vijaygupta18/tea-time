@@ -58,12 +58,14 @@ const Summary = ({ session, onNewSession }: SummaryProps) => {
     const { data: topSponsors } = await supabase
       .from('users')
       .select('name, total_drinks_bought, drink_count')
+      .eq('isActive', true)
       .order('total_drinks_bought', { ascending: false })
       .limit(3);
 
     const { data: topDrinkers } = await supabase
       .from('users')
       .select('name, total_drinks_bought, drink_count')
+      .eq('isActive', true)
       .order('drink_count', { ascending: false })
       .limit(3);
 
@@ -94,11 +96,13 @@ const Summary = ({ session, onNewSession }: SummaryProps) => {
           const { count: sponsorsAbove } = await supabase
             .from('users')
             .select('*', { count: 'exact', head: true })
+            .eq('isActive', true)
             .gt('total_drinks_bought', userData.total_drinks_bought || 0);
 
           const { count: drinkersAbove } = await supabase
             .from('users')
             .select('*', { count: 'exact', head: true })
+            .eq('isActive', true)
             .gt('drink_count', userData.drink_count || 0);
 
           currentUserStats = {

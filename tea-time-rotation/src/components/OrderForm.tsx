@@ -13,6 +13,9 @@ interface User {
   last_sugar_level: string;
   profile_picture_url?: string;
   roles: string[];
+  isActive: boolean;
+  drink_count: number;
+  total_drinks_bought: number;
 }
 
 interface Order {
@@ -30,6 +33,8 @@ interface OrderFormProps {
   onOrderUpdate?: () => void;
 }
 
+const LONG_PRESS_DURATION = 2000; // 2 seconds
+
 const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) => {
   const { profile } = useAuth();
   const [selectedUser, setSelectedUser] = useState('');
@@ -41,6 +46,9 @@ const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) =>
   const [kettleClicks, setKettleClicks] = useState(0);
   const drinkSectionRef = useRef<HTMLDivElement>(null);
   const topOfPageRef = useRef<HTMLDivElement>(null);
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const longPressTriggeredRef = useRef(false);
+  const [showUserStats, setShowUserStats] = useState<User | null>(null);
 
   useEffect(() => {
     if (selectedUser) {
@@ -174,6 +182,95 @@ const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) =>
     );
   };
 
+  const handleDisableUser = async (userId: string, userName: string, isCurrentlyActive: boolean) => {
+    if (!profile?.permissions.includes('can_disable_user')) {
+      showError('Permission Denied', 'You do not have permission to manage user status.');
+      return;
+    }
+
+    const isDisabling = isCurrentlyActive;
+    const action = isDisabling ? 'Disable' : 'Enable';
+    const newStatus = !isCurrentlyActive;
+    
+    showConfirm(
+      `${action} User?`,
+      isDisabling 
+        ? `Are you sure you want to disable ${userName}? They will no longer appear in leaderboards and cannot place orders.`
+        : `Are you sure you want to enable ${userName}? They will reappear in leaderboards and be able to place orders.`,
+      async () => {
+        const { error } = await supabase
+          .from('users')
+          .update({ isActive: newStatus })
+          .eq('id', userId);
+
+        if (error) {
+          console.error(`Error ${action.toLowerCase()}ing user:`, error);
+          showError(`${action} Failed`, `Could not ${action.toLowerCase()} ${userName}. Please try again.`);
+          return;
+        }
+
+        showSuccess(
+          `User ${action}d`, 
+          isDisabling 
+            ? `${userName} has been disabled and will no longer appear in leaderboards.`
+            : `${userName} has been enabled and can now participate again.`
+        );
+        
+        // Trigger refresh
+        if (onOrderUpdate) {
+          onOrderUpdate();
+        }
+      },
+      `${action} User`,
+      'Cancel'
+    );
+  };
+
+  const handleLongPressStart = (userId: string) => {
+    if (!profile?.permissions.includes('can_disable_user')) return;
+    
+    const user = users.find(u => u.id === userId);
+    if (!user) return;
+
+    longPressTriggeredRef.current = false;
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTriggeredRef.current = true;
+      handleDisableUser(userId, user.name, user.isActive);
+    }, LONG_PRESS_DURATION);
+  };
+
+  const handleLongPressEnd = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleUserTileClick = (userId: string, isActive: boolean) => {
+    // Clear any long press timer on click
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    
+    // If long press was triggered, don't handle the click
+    if (longPressTriggeredRef.current) {
+      longPressTriggeredRef.current = false;
+      return;
+    }
+    
+    if (isActive) {
+      // Allow selection for active users
+      handleUserSelect(userId);
+    } else {
+      // Show stats for retired users
+      const user = users.find(u => u.id === userId);
+      if (user) {
+        setShowUserStats(user);
+      }
+    }
+  };
+
   return (
     <div ref={topOfPageRef} className="space-y-10">
       {/* Progress Header */}
@@ -246,23 +343,44 @@ const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) =>
           
           {/* Compact Grid Layout for User Selection */}
           <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-2">
-            {users.sort((a, b) => a.name.localeCompare(b.name)).map((user) => {
+            {users.sort((a, b) => {
+              // Sort active users first, then by name
+              if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
+              return a.name.localeCompare(b.name);
+            }).map((user) => {
               const isSelected = selectedUser === user.id;
               const hasOrdered = submittedUsers.includes(user.id);
+              const isDisabled = !user.isActive;
               
               return (
                 <button
                   key={user.id}
                   type="button"
-                  onClick={() => handleUserSelect(user.id)}
+                  onClick={() => handleUserTileClick(user.id, user.isActive)}
+                  onMouseDown={() => handleLongPressStart(user.id)}
+                  onMouseUp={handleLongPressEnd}
+                  onMouseLeave={handleLongPressEnd}
+                  onTouchStart={() => handleLongPressStart(user.id)}
+                  onTouchEnd={handleLongPressEnd}
                   className={`relative p-2 sm:p-3 rounded-lg text-center transition-all duration-300 border-2 min-h-[5rem] sm:min-h-[6rem] flex flex-col items-center justify-center touch-manipulation ${
-                    isSelected
+                    isDisabled
+                      ? 'bg-gray-200 border-gray-300 text-gray-500 cursor-not-allowed opacity-60'
+                      : isSelected
                       ? 'bg-gradient-to-br from-green-500 to-green-600 text-white border-green-600 shadow-lg scale-105'
                       : hasOrdered
                       ? 'bg-blue-50 border-blue-300 text-blue-800 hover:bg-blue-100 active:bg-blue-200'
                       : 'bg-white border-gray-200 text-gray-800 hover:border-green-300 hover:bg-green-50 active:bg-green-100'
                   }`}
                 >
+                  {/* Retired stamp for disabled users */}
+                  {isDisabled && (
+                    <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+                      <span className="bg-red-500 text-white text-xs font-bold px-3 py-1 rounded-full border-2 border-red-600 shadow-lg transform -rotate-12 uppercase tracking-wider">
+                        Retired
+                      </span>
+                    </div>
+                  )}
+                  
                   {user.roles.includes('admin') && (
                     <div className="absolute top-1 right-1 text-yellow-400">
                       👑
@@ -273,19 +391,19 @@ const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) =>
                       ✓
                     </div>
                   )}
-                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center mb-1 overflow-hidden">
+                  <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center mb-1 overflow-hidden ${isDisabled ? 'bg-gray-300' : ''}`}>
                     {user.profile_picture_url ? (
-                      <img src={user.profile_picture_url} alt={user.name} className="w-full h-full object-cover" />
+                      <img src={user.profile_picture_url} alt={user.name} className={`w-full h-full object-cover ${isDisabled ? 'grayscale' : ''}`} />
                     ) : (
-                      <span className="text-lg font-bold">{user.name.charAt(0)}</span>
+                      <span className={`text-lg font-bold ${isDisabled ? 'text-gray-400' : ''}`}>{user.name.charAt(0)}</span>
                     )}
                   </div>
                   <div className={`text-xs font-semibold leading-tight text-center ${
-                    isSelected ? 'text-white' : hasOrdered ? 'text-blue-800' : 'text-gray-800'
+                    isSelected ? 'text-white' : hasOrdered ? 'text-blue-800' : isDisabled ? 'text-gray-400' : 'text-gray-800'
                   }`}>
                     {user.name}
                   </div>
-                  {isSelected && (
+                  {isSelected && !isDisabled && (
                     <div className="absolute inset-0 rounded-lg bg-gradient-to-r from-white/20 to-transparent animate-pulse"></div>
                   )}
                 </button>
@@ -453,6 +571,39 @@ const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) =>
           }
         }}
       />
+
+      {/* User Stats Modal */}
+      {showUserStats && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setShowUserStats(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full animate-slide-up" onClick={(e) => e.stopPropagation()}>
+            <div className="text-center mb-6">
+              <div className="text-4xl mb-2">📊</div>
+              <h3 className="text-xl font-bold text-gray-800">{showUserStats.name}&apos;s Tea Stats</h3>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              <div className="bg-blue-50 rounded-xl p-4 text-center">
+                <div className="text-3xl mb-1">🍵</div>
+                <div className="text-2xl font-bold text-blue-600">{showUserStats.drink_count}</div>
+                <div className="text-xs text-blue-700 font-medium">Drinks Consumed</div>
+              </div>
+              
+              <div className="bg-green-50 rounded-xl p-4 text-center">
+                <div className="text-3xl mb-1">☕</div>
+                <div className="text-2xl font-bold text-green-600">{showUserStats.total_drinks_bought}</div>
+                <div className="text-xs text-green-700 font-medium">Drinks Sponsored</div>
+              </div>
+            </div>
+            
+            <button
+              onClick={() => setShowUserStats(null)}
+              className="w-full py-3 px-4 bg-gradient-to-r from-gray-500 to-gray-600 text-white font-semibold rounded-xl hover:from-gray-600 hover:to-gray-700 transition-all duration-200 shadow-lg"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

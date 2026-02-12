@@ -10,7 +10,8 @@ CREATE TABLE users (
   last_sugar_level TEXT,
   total_drinks_bought INTEGER DEFAULT 0,
   drink_count INTEGER DEFAULT 0,
-  profile_picture_url TEXT
+  profile_picture_url TEXT,
+  isActive BOOLEAN NOT NULL DEFAULT true
 );
 
 -- Create roles and permissions tables
@@ -25,7 +26,7 @@ CREATE TABLE user_roles (
   PRIMARY KEY (user_id, role_id)
 );
 
-CREATE TYPE permission AS ENUM ('can_add_user', 'can_summarize_session', 'can_abandon_session', 'can_update_order', 'can_cancel_order');
+CREATE TYPE permission AS ENUM ('can_add_user', 'can_summarize_session', 'can_abandon_session', 'can_update_order', 'can_cancel_order', 'can_disable_user');
 
 CREATE TABLE role_permissions (
   role_id UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
