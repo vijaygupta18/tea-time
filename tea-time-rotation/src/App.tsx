@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import OrderForm from './components/OrderForm';
 import Summary from './components/Summary';
@@ -12,6 +12,7 @@ import { usePinModal } from './hooks/usePinModal';
 import { useAuth } from './hooks/useAuth';
 import Auth from './components/Auth';
 import ChaiLytics from './components/ChaiLytics';
+import ManagePricesModal from './components/ManagePricesModal';
 import type { LeaderboardEntry } from './components/Leaderboard';
 
 interface Session {
@@ -34,6 +35,8 @@ interface User {
   roles: string[];
   total_drinks_bought: number;
   drink_count: number;
+  total_cost_sponsored: number;
+  total_cost_consumed: number;
   last_assigned_at: string | null;
   isActive: boolean;
 }
@@ -49,6 +52,9 @@ function App() {
   const { isModalOpen, openModal, closeModal: closeAddUserModal } = useAddUserModal();
   const { isPinModalOpen, onConfirm: onPinConfirm, showPinModal, closePinModal } = usePinModal();
   const [kettleClicks, setKettleClicks] = useState(0);
+  const [showAdminMenu, setShowAdminMenu] = useState(false);
+  const [showManagePricesModal, setShowManagePricesModal] = useState(false);
+  const adminMenuRef = useRef<HTMLDivElement>(null);
   const [topBuyers, setTopBuyers] = useState<LeaderboardEntry[]>([]);
   const [topDrinkers, setTopDrinkers] = useState<LeaderboardEntry[]>([]);
   const [showAssigneeModal, setShowAssigneeModal] = useState(false);
@@ -60,12 +66,34 @@ function App() {
     drinkerRank: number;
   } | null>(null);
 
+  // Close admin menu on outside click or Escape
+  useEffect(() => {
+    if (!showAdminMenu) return;
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowAdminMenu(false);
+    };
+
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (adminMenuRef.current && !adminMenuRef.current.contains(e.target as Node)) {
+        setShowAdminMenu(false);
+      }
+    };
+
+    document.addEventListener('keydown', handleEscape);
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+      document.removeEventListener('mousedown', handleOutsideClick);
+    };
+  }, [showAdminMenu]);
+
   const fetchTopDrinkers = async () => {
     const { data } = await supabase
       .from('users')
-      .select('name, drink_count, total_drinks_bought')
+      .select('name, drink_count, total_drinks_bought, total_cost_sponsored, total_cost_consumed')
       .eq('isActive', true)
-      .order('drink_count', { ascending: false, nullsFirst: false })
+      .order('total_cost_consumed', { ascending: false, nullsFirst: false })
       .order('name', { ascending: true })
       .limit(3);
     if (data) {
@@ -76,9 +104,9 @@ function App() {
   const fetchLeaderboard = async () => {
     const { data } = await supabase
       .from('users')
-      .select('name, total_drinks_bought, drink_count')
+      .select('name, total_drinks_bought, drink_count, total_cost_sponsored, total_cost_consumed')
       .eq('isActive', true)
-      .order('total_drinks_bought', { ascending: false, nullsFirst: false })
+      .order('total_cost_sponsored', { ascending: false, nullsFirst: false })
       .order('name', { ascending: true })
       .limit(3);
     if (data) {
@@ -93,10 +121,9 @@ function App() {
     }
 
     try {
-      // Get current user's data
       const { data: userData, error: userError } = await supabase
         .from('users')
-        .select('name, total_drinks_bought, drink_count')
+        .select('name, total_drinks_bought, drink_count, total_cost_sponsored, total_cost_consumed')
         .eq('name', profile.name)
         .single();
 
@@ -105,19 +132,17 @@ function App() {
         return;
       }
 
-      // Get sponsor rank (count active users with more drinks bought)
       const { count: sponsorsAbove } = await supabase
         .from('users')
         .select('*', { count: 'exact', head: true })
         .eq('isActive', true)
-        .gt('total_drinks_bought', userData.total_drinks_bought || 0);
+        .gt('total_cost_sponsored', userData.total_cost_sponsored || 0);
 
-      // Get drinker rank (count active users with more drinks consumed)
       const { count: drinkersAbove } = await supabase
         .from('users')
         .select('*', { count: 'exact', head: true })
         .eq('isActive', true)
-        .gt('drink_count', userData.drink_count || 0);
+        .gt('total_cost_consumed', userData.total_cost_consumed || 0);
 
       setCurrentUserStats({
         userData: userData as LeaderboardEntry,
@@ -134,7 +159,7 @@ function App() {
     const fetchAllData = async (currentSession: Session) => {
       const [ordersData, usersData] = await Promise.all([
         supabase.from('orders').select('*').eq('session_id', currentSession.id),
-supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, profile_picture_url, total_drinks_bought, drink_count, last_assigned_at, isActive, roles:user_roles(roles(name))'),
+        supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, profile_picture_url, total_drinks_bought, drink_count, total_cost_sponsored, total_cost_consumed, last_assigned_at, isActive, roles:user_roles(roles(name))'),
       ]);
       if (ordersData.data) setOrders(ordersData.data);
       if (usersData.data) {
@@ -152,7 +177,7 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
       const { count } = await supabase
         .from('sessions')
         .select('*', { count: 'exact', head: true });
-      
+
       if (count) setTotalSessions(count);
 
       const { data: lastSession } = await supabase
@@ -167,14 +192,12 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
         setLastAssignee(lastSession.assignee_name);
       }
 
-      // First, try to find an active session
       const { data: sessionData, error } = await supabase
         .from('sessions')
         .select('*')
         .eq('status', 'active')
         .single();
 
-      // If no active session, check for a recently completed one
       if (!sessionData && (!error || error.code === 'PGRST116')) {
         const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
         const { data: completedData } = await supabase
@@ -240,12 +263,12 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
   const fetchAllData = async (currentSession: Session) => {
     const [ordersData, usersData] = await Promise.all([
       supabase.from('orders').select('*').eq('session_id', currentSession.id),
-      supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, profile_picture_url, total_drinks_bought, drink_count, last_assigned_at, isActive, roles:user_roles(roles(name))'),
+      supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, profile_picture_url, total_drinks_bought, drink_count, total_cost_sponsored, total_cost_consumed, last_assigned_at, isActive, roles:user_roles(roles(name))'),
     ]);
     if (ordersData.data) setOrders(ordersData.data);
     if (usersData.data) {
         const transformedUsers = usersData.data.map(user => {
-            const roles = Array.isArray(user.roles) 
+            const roles = Array.isArray(user.roles)
                 ? (user.roles as unknown as { roles: { name: string } }[]).map((r) => r.roles.name)
                 : [];
             return { ...user, roles };
@@ -277,12 +300,12 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
     };
   }, [session]);
 
-  // Helper function to calculate ratio
+  // Helper function to calculate ratio using costs
   const calculateRatio = (user: User) => {
-    if (user.total_drinks_bought > 0) {
-      return (user.drink_count / user.total_drinks_bought).toFixed(2);
+    if (user.total_cost_sponsored > 0) {
+      return (user.total_cost_consumed / user.total_cost_sponsored).toFixed(2);
     }
-    return user.drink_count > 0 ? '∞' : '0.00';
+    return user.total_cost_consumed > 0 ? '∞' : '0.00';
   };
 
   // Helper function to format last assigned date
@@ -316,12 +339,14 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
   };
 
   const handleKettleClick = () => {
-    if (profile?.permissions.includes('can_add_user')) {
+    const canAddUser = profile?.permissions.includes('can_add_user');
+    const canManagePrices = profile?.permissions.includes('can_manage_prices');
+    if (canAddUser || canManagePrices) {
       const newClicks = kettleClicks + 1;
       setKettleClicks(newClicks);
       if (newClicks >= 5) {
-        openModal();
-        setKettleClicks(0); // Reset after opening
+        setShowAdminMenu(true);
+        setKettleClicks(0);
       }
     }
   };
@@ -342,7 +367,6 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
       'This will complete the session and assign someone to make tea. Everyone will see the results.',
       async () => {
         try {
-          // Phase 1: Get candidate list
           const { data, error } = await supabase.functions.invoke('summarize', {
             body: { session_id: session.id },
           });
@@ -353,10 +377,9 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
             return;
           }
 
-          // Check if we need admin confirmation
           if (data?.requiresConfirmation && data?.candidates) {
             setCandidates(data.candidates);
-            setSelectedAssignee(data.candidates[0]?.id || ''); // Default to first candidate
+            setSelectedAssignee(data.candidates[0]?.id || '');
             setShowAssigneeModal(true);
           }
         } catch (err) {
@@ -376,7 +399,6 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
     }
 
     try {
-      // Phase 2: Commit with selected assignee
       const { data, error } = await supabase.functions.invoke('summarize', {
         body: { session_id: session.id, confirm_assignee: selectedAssignee },
       });
@@ -384,7 +406,6 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
       if (error) {
         console.error('Summarize function error:', error);
 
-        // Handle race condition specifically
         if (error.message?.includes('Session already summarized') ||
             error.message?.includes('already been completed')) {
           showError(
@@ -401,7 +422,6 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
       if (data?.committed) {
         setShowAssigneeModal(false);
 
-        // Force refresh the session data to get updated status
         const { data: updatedSession } = await supabase
           .from('sessions')
           .select('*')
@@ -432,7 +452,6 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
 
     showPinModal(async () => {
       try {
-        // First, delete all orders associated with the session
         const { error: deleteOrdersError } = await supabase
           .from('orders')
           .delete()
@@ -442,7 +461,6 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
           throw deleteOrdersError;
         }
 
-        // Then, delete the session itself
         const { error: deleteSessionError } = await supabase
           .from('sessions')
           .delete()
@@ -503,7 +521,7 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
       </div>
       {/* Enhanced Background for Better Visibility */}
       <div className="absolute inset-0 bg-gradient-to-br from-white via-primary-50 to-chai-100"></div>
-      
+
       {/* Subtle Tea Elements - Reduced for Better Visibility */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-10 left-10 text-4xl opacity-5 floating" style={{animationDelay: '0s'}}>🍃</div>
@@ -512,21 +530,44 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
         <div className="absolute bottom-20 right-32 text-2xl opacity-8 floating" style={{animationDelay: '1s'}}>🍃</div>
         <div className="absolute top-1/2 left-4 text-3xl opacity-5 floating" style={{animationDelay: '3s'}}>🍵</div>
       </div>
-      
+
       {/* Enhanced Mobile-Friendly Main Content */}
       <div className="relative z-10 min-h-screen flex flex-col items-center justify-center p-3 sm:p-6 lg:p-8 pt-24 sm:pt-6">
         {/* Enhanced Mobile-First Logo/Header Section */}
         <div className="text-center mb-6 sm:mb-8 animate-fade-in px-4">
-          <button
-            type="button"
-            className="relative inline-block"
-            onClick={handleKettleClick}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleKettleClick(); } }}
-            aria-label="Open admin actions"
-          >
-            <div className="absolute -inset-4 bg-gradient-to-r from-primary-500 to-chai-500 rounded-full blur-lg opacity-20 animate-pulse-slow"></div>
-            <div className="relative text-6xl sm:text-7xl lg:text-8xl animate-bounce-subtle">🫖</div>
-          </button>
+          <div className="relative inline-block" ref={adminMenuRef}>
+            <button
+              type="button"
+              onClick={handleKettleClick}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleKettleClick(); } }}
+              aria-label="Open admin actions"
+            >
+              <div className="absolute -inset-4 bg-gradient-to-r from-primary-500 to-chai-500 rounded-full blur-lg opacity-20 animate-pulse-slow"></div>
+              <div className="relative text-6xl sm:text-7xl lg:text-8xl animate-bounce-subtle">🫖</div>
+            </button>
+
+            {/* Admin action menu */}
+            {showAdminMenu && (
+              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 min-w-[160px] overflow-hidden">
+                {profile?.permissions.includes('can_add_user') && (
+                  <button
+                    className="w-full px-4 py-3 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    onClick={() => { openModal(); setShowAdminMenu(false); }}
+                  >
+                    👤 Add User
+                  </button>
+                )}
+                {profile?.permissions.includes('can_manage_prices') && (
+                  <button
+                    className="w-full px-4 py-3 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    onClick={() => { setShowManagePricesModal(true); setShowAdminMenu(false); }}
+                  >
+                    💰 Manage Prices
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
           <h1 className="text-2xl sm:text-3xl lg:text-5xl font-bold text-gray-800 leading-tight mt-3 sm:mt-4 mb-2 drop-shadow-sm">
             Tea Time
           </h1>
@@ -539,10 +580,10 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
             {session ? (
               session.status === 'active' ? (
                 <div className="animate-slide-up">
-                  <OrderForm 
-                    session={session} 
-                    orders={orders} 
-                    users={users} 
+                  <OrderForm
+                    session={session}
+                    orders={orders}
+                    users={users}
                     onOrderUpdate={() => fetchAllData(session)}
                   />
                 </div>
@@ -564,7 +605,7 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
                     <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">Ready for Tea Time?</h2>
                     <p className="text-gray-700 text-base sm:text-lg font-medium">Gather everyone and start brewing memories!</p>
                   </div>
-                  
+
                   <ChaiLytics
                     topSponsors={topBuyers}
                     topDrinkers={topDrinkers}
@@ -574,7 +615,7 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
                     currentUserStats={currentUserStats || undefined}
                   />
                 </div>
-                
+
                 <div className="flex flex-col items-center space-y-4">
                   <button
                     onClick={handleStartSession}
@@ -599,7 +640,7 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
                 </div>
               </div>
             )}
-            
+
             {session && session.status === 'active' && (
               <DangerZone title="Danger Zone">
                 <div className="pt-8 flex flex-col items-center space-y-4 animate-slide-up" style={{animationDelay: '0.2s'}}>
@@ -626,7 +667,7 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
             )}
           </div>
         </div>
-        
+
         {/* Enhanced Footer */}
         <footer className="text-center mt-12 px-4 animate-fade-in" style={{animationDelay: '0.5s'}}>
           <div className="bg-white/90 border-2 border-gray-200 rounded-2xl px-8 py-4 inline-block shadow-lg">
@@ -642,7 +683,7 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
           </div>
         </footer>
       </div>
-      
+
       {/* Subtle Pattern Overlay */}
       <div className="absolute inset-0 opacity-5 pointer-events-none">
         <div style={{
@@ -670,6 +711,11 @@ supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, p
         isOpen={isModalOpen}
         onClose={closeAddUserModal}
         onUserAdded={handleUserAdded}
+      />
+
+      <ManagePricesModal
+        isOpen={showManagePricesModal}
+        onClose={() => setShowManagePricesModal(false)}
       />
 
       <PinModal

@@ -5,6 +5,7 @@ import { useModal } from '../hooks/useModal';
 import AddUserModal from './AddUserModal';
 import { useAddUserModal } from '../hooks/useAddUserModal';
 import { useAuth } from '../hooks/useAuth';
+import { resolvePrice, type DrinkPrice } from '../utils';
 
 interface User {
   id: string;
@@ -41,6 +42,7 @@ const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) =>
   const [drinkType, setDrinkType] = useState('Tea');
   const [sugarLevel, setSugarLevel] = useState('Normal');
   const [isExcused, setIsExcused] = useState(false);
+  const [drinkPrices, setDrinkPrices] = useState<DrinkPrice[]>([]);
   const { isOpen, config, onConfirm, closeModal, showError, showSuccess, showConfirm } = useModal();
   const { isModalOpen, openModal, closeModal: closeAddUserModal } = useAddUserModal();
   const [kettleClicks, setKettleClicks] = useState(0);
@@ -49,6 +51,12 @@ const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) =>
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const longPressTriggeredRef = useRef(false);
   const [showUserStats, setShowUserStats] = useState<User | null>(null);
+
+  useEffect(() => {
+    supabase.from('drink_prices').select('*').then(({ data }) => {
+      if (data) setDrinkPrices(data as DrinkPrice[]);
+    });
+  }, []);
 
   useEffect(() => {
     if (selectedUser) {
@@ -510,6 +518,15 @@ const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) =>
             ))}
           </div>
         </div>
+
+        {/* Price preview */}
+        {drinkPrices.length > 0 && (
+          <div className="text-center py-2">
+            <span className="inline-block bg-green-50 border border-green-200 rounded-full px-4 py-1 text-sm font-semibold text-green-800">
+              💰 Price: ₹{resolvePrice(drinkType, sugarLevel, drinkPrices)}
+            </span>
+          </div>
+        )}
 
         {/* Enhanced Mobile-Friendly Action Buttons */}
         <div className="space-y-6 pt-8 animate-slide-up" style={{animationDelay: '0.3s'}}>

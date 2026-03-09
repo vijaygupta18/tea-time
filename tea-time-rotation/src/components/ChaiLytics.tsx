@@ -57,7 +57,7 @@ function ChaiLytics({ topSponsors, topDrinkers, totalSessions, lastAssignee, cur
         {activeTab === 'sponsors' && (
           <Leaderboard
             entries={topSponsors}
-            field="total_drinks_bought"
+            field="total_cost_sponsored"
             currentUserName={currentUserName}
             currentUserEntry={currentUserStats?.userData}
             currentUserRank={currentUserStats?.sponsorRank}
@@ -66,7 +66,7 @@ function ChaiLytics({ topSponsors, topDrinkers, totalSessions, lastAssignee, cur
         {activeTab === 'drinkers' && (
           <Leaderboard
             entries={topDrinkers}
-            field="drink_count"
+            field="total_cost_consumed"
             currentUserName={currentUserName}
             currentUserEntry={currentUserStats?.userData}
             currentUserRank={currentUserStats?.drinkerRank}

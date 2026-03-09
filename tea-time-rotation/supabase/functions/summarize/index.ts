@@ -7,6 +7,24 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+interface DrinkPrice {
+  drink_type: string;
+  sugar_level: string;
+  price: number;
+}
+
+function resolvePrice(drink: string, sugar: string, prices: DrinkPrice[]): number {
+  const exact = prices.find(p => p.drink_type === drink && p.sugar_level === sugar);
+  if (exact) return exact.price;
+  const drinkWild = prices.find(p => p.drink_type === drink && p.sugar_level === '*');
+  if (drinkWild) return drinkWild.price;
+  const wildSugar = prices.find(p => p.drink_type === '*' && p.sugar_level === sugar);
+  if (wildSugar) return wildSugar.price;
+  const wildWild = prices.find(p => p.drink_type === '*' && p.sugar_level === '*');
+  if (wildWild) return wildWild.price;
+  return 20;
+}
+
 Deno.serve(async (req) => {
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
@@ -48,10 +66,10 @@ Deno.serve(async (req) => {
 
   const users = orders.map(order => order.users);
 
-  // Sort by drink_count/total_drinks_bought ratio (desc) and then by last_assigned_at (asc)
+  // Sort by total_cost_consumed/total_cost_sponsored ratio (desc) and then by last_assigned_at (asc)
   users.sort((a, b) => {
-    const ratioA = a.total_drinks_bought > 0 ? a.drink_count / a.total_drinks_bought : (a.drink_count > 0 ? Infinity : 0);
-    const ratioB = b.total_drinks_bought > 0 ? b.drink_count / b.total_drinks_bought : (b.drink_count > 0 ? Infinity : 0);
+    const ratioA = a.total_cost_sponsored > 0 ? a.total_cost_consumed / a.total_cost_sponsored : (a.total_cost_consumed > 0 ? Infinity : 0);
+    const ratioB = b.total_cost_sponsored > 0 ? b.total_cost_consumed / b.total_cost_sponsored : (b.total_cost_consumed > 0 ? Infinity : 0);
 
     if (ratioA !== ratioB) {
       return ratioB - ratioA; // Sort descending by ratio
@@ -99,7 +117,6 @@ Deno.serve(async (req) => {
   }
 
   // Atomic update: only succeeds if status is still 'active'
-  // This acts as a lock - only ONE request can successfully transition from active to completed
   const { data: updatedSession, error: sessionUpdateError } = await supabase
     .from('sessions')
     .update({
@@ -115,7 +132,6 @@ Deno.serve(async (req) => {
 
   // Check if the update succeeded
   if (!updatedSession || updatedSession.length === 0) {
-    // Session was already completed by another request
     return new Response(
       JSON.stringify({
         error: 'Session already summarized',
@@ -123,7 +139,7 @@ Deno.serve(async (req) => {
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 409,  // Conflict
+        status: 409,
       }
     );
   }
@@ -138,8 +154,9 @@ Deno.serve(async (req) => {
     );
   }
 
-  // If we reach here, we successfully claimed the session completion
-  // Now proceed with user updates...
+  // Fetch drink prices for cost resolution
+  const { data: drinkPricesData } = await supabase.from('drink_prices').select('*');
+  const prices: DrinkPrice[] = drinkPricesData || [];
 
   // Update last order details for each user
   for (const order of orders) {
@@ -160,10 +177,12 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Increment drink_count for all participating users
+  // Increment drink_count and total_cost_consumed for all participating users
   for (const order of orders) {
     if (order.user_id) {
       await supabase.rpc('increment_drink_count', { user_id: order.user_id });
+      const price = resolvePrice(order.drink_type, order.sugar_level, prices);
+      await supabase.rpc('increment_total_cost_consumed', { p_user_id: order.user_id, p_amount: price });
     }
   }
 
@@ -173,6 +192,10 @@ Deno.serve(async (req) => {
     .eq('id', assignee.id);
 
   await supabase.rpc('increment_total_drinks_bought', { p_user_id: assignee.id, p_amount: orders.length });
+
+  // Increment total_cost_sponsored for assignee (total session cost)
+  const totalSessionCost = orders.reduce((sum, order) => sum + resolvePrice(order.drink_type, order.sugar_level, prices), 0);
+  await supabase.rpc('increment_total_cost_sponsored', { p_user_id: assignee.id, p_amount: totalSessionCost });
 
   return new Response(JSON.stringify({ assignee, committed: true }), {
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },

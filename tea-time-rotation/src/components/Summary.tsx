@@ -4,6 +4,7 @@ import Modal from './ui/Modal';
 import ChaiLytics from './ChaiLytics';
 import type { LeaderboardEntry } from './Leaderboard';
 import { useAuth } from '../hooks/useAuth';
+import { resolvePrice, formatCost, type DrinkPrice } from '../utils';
 
 interface User {
   name: string;
@@ -32,6 +33,7 @@ const Summary = ({ session, onNewSession }: SummaryProps) => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [assignee, setAssignee] = useState<string | null>(null);
   const [summarizedBy, setSummarizedBy] = useState<string | null>(null);
+  const [drinkPrices, setDrinkPrices] = useState<DrinkPrice[]>([]);
   const [isChaiLyticsOpen, setIsChaiLyticsOpen] = useState(false);
   const [chaiLyticsData, setChaiLyticsData] = useState<{
     topSponsors: LeaderboardEntry[];
@@ -57,16 +59,16 @@ const Summary = ({ session, onNewSession }: SummaryProps) => {
   const fetchChaiLyticsData = async () => {
     const { data: topSponsors } = await supabase
       .from('users')
-      .select('name, total_drinks_bought, drink_count')
+      .select('name, total_drinks_bought, drink_count, total_cost_sponsored, total_cost_consumed')
       .eq('isActive', true)
-      .order('total_drinks_bought', { ascending: false })
+      .order('total_cost_sponsored', { ascending: false })
       .limit(3);
 
     const { data: topDrinkers } = await supabase
       .from('users')
-      .select('name, total_drinks_bought, drink_count')
+      .select('name, total_drinks_bought, drink_count, total_cost_sponsored, total_cost_consumed')
       .eq('isActive', true)
-      .order('drink_count', { ascending: false })
+      .order('total_cost_consumed', { ascending: false })
       .limit(3);
 
     const { count: totalSessions } = await supabase
@@ -88,7 +90,7 @@ const Summary = ({ session, onNewSession }: SummaryProps) => {
       try {
         const { data: userData } = await supabase
           .from('users')
-          .select('name, total_drinks_bought, drink_count')
+          .select('name, total_drinks_bought, drink_count, total_cost_sponsored, total_cost_consumed')
           .eq('name', profile.name)
           .single();
 
@@ -97,13 +99,13 @@ const Summary = ({ session, onNewSession }: SummaryProps) => {
             .from('users')
             .select('*', { count: 'exact', head: true })
             .eq('isActive', true)
-            .gt('total_drinks_bought', userData.total_drinks_bought || 0);
+            .gt('total_cost_sponsored', userData.total_cost_sponsored || 0);
 
           const { count: drinkersAbove } = await supabase
             .from('users')
             .select('*', { count: 'exact', head: true })
             .eq('isActive', true)
-            .gt('drink_count', userData.drink_count || 0);
+            .gt('total_cost_consumed', userData.total_cost_consumed || 0);
 
           currentUserStats = {
             userData: userData as LeaderboardEntry,
@@ -132,13 +134,12 @@ const Summary = ({ session, onNewSession }: SummaryProps) => {
 
   useEffect(() => {
     const fetchOrders = async () => {
-      const { data } = await supabase
-        .from('orders')
-        .select('*, users(name)')
-        .eq('session_id', session.id);
-      if (data) {
-        setOrders(data as Order[]);
-      }
+      const [ordersResult, pricesResult] = await Promise.all([
+        supabase.from('orders').select('*, users(name)').eq('session_id', session.id),
+        supabase.from('drink_prices').select('*'),
+      ]);
+      if (ordersResult.data) setOrders(ordersResult.data as Order[]);
+      if (pricesResult.data) setDrinkPrices(pricesResult.data as DrinkPrice[]);
     };
 
     const fetchAssignee = async () => {
@@ -244,8 +245,13 @@ const Summary = ({ session, onNewSession }: SummaryProps) => {
               <span className="mr-3 text-3xl">📊</span>
               Order Analytics
             </h3>
-            <div className="inline-flex items-center space-x-3 bg-gradient-to-r from-secondary-100 to-matcha-100 rounded-full px-6 py-2">
-              <span className="text-gray-700 font-semibold text-lg">Total Drinks : {orders.length}</span>
+            <div className="inline-flex items-center space-x-3 bg-gradient-to-r from-secondary-100 to-matcha-100 rounded-full px-6 py-2 flex-wrap gap-2 justify-center">
+              <span className="text-gray-700 font-semibold text-lg">Total Drinks: {orders.length}</span>
+              {drinkPrices.length > 0 && (
+                <span className="text-green-700 font-semibold text-lg">
+                  · {formatCost(orders.reduce((sum, o) => sum + resolvePrice(o.drink_type, o.sugar_level, drinkPrices), 0))}
+                </span>
+              )}
             </div>
           </div>
 
@@ -275,10 +281,13 @@ const Summary = ({ session, onNewSession }: SummaryProps) => {
                       </div>
                       <div>
                         <span className="font-bold text-gray-900">{drink}</span>
-                        <div className="flex space-x-1 mt-1">
+                        <div className="flex space-x-1 mt-1 flex-wrap gap-1">
                           {Object.entries(sugarLevels).map(([sugar, count]) => (
                             <span key={sugar} className="text-sm bg-gray-100 border border-gray-300 rounded-full px-2 py-1 font-medium">
                               {sugarMap[sugar] || '?'}×{count}
+                              {drinkPrices.length > 0 && (
+                                <span className="text-green-700 ml-1">₹{resolvePrice(drink, sugar, drinkPrices)}</span>
+                              )}
                             </span>
                           ))}
                         </div>
