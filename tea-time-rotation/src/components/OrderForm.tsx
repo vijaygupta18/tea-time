@@ -5,7 +5,7 @@ import { useModal } from '../hooks/useModal';
 import AddUserModal from './AddUserModal';
 import { useAddUserModal } from '../hooks/useAddUserModal';
 import { useAuth } from '../hooks/useAuth';
-import { resolvePrice, type DrinkPrice } from '../utils';
+import { resolvePrice, type DrinkPrice, type Drink } from '../utils';
 
 interface User {
   id: string;
@@ -43,6 +43,7 @@ const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) =>
   const [sugarLevel, setSugarLevel] = useState('Normal');
   const [isExcused, setIsExcused] = useState(false);
   const [drinkPrices, setDrinkPrices] = useState<DrinkPrice[]>([]);
+  const [drinks, setDrinks] = useState<Drink[]>([]);
   const { isOpen, config, onConfirm, closeModal, showError, showSuccess, showConfirm } = useModal();
   const { isModalOpen, openModal, closeModal: closeAddUserModal } = useAddUserModal();
   const [kettleClicks, setKettleClicks] = useState(0);
@@ -55,6 +56,9 @@ const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) =>
   useEffect(() => {
     supabase.from('drink_prices').select('*').then(({ data }) => {
       if (data) setDrinkPrices(data as DrinkPrice[]);
+    });
+    supabase.from('drinks').select('name, emoji, is_popular').eq('is_active', true).order('name').then(({ data }) => {
+      if (data) setDrinks(data as Drink[]);
     });
   }, []);
 
@@ -445,15 +449,7 @@ const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) =>
           </div>
           
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
-            {[
-              { name: 'Tea', emoji: '🍵', popular: true },
-              { name: 'Coffee', emoji: '☕', popular: true },
-              { name: 'Black Coffee', emoji: '☕' },
-              { name: 'Black Tea', emoji: '🍵' },
-              { name: 'Lemon Tea', emoji: '🍋' },
-              { name: 'Plain Milk', emoji: '🥛' },
-              { name: 'Badam Milk', emoji: '🥛' },
-            ].map((drink) => (
+            {drinks.map((drink) => (
               <button
                 key={drink.name}
                 type="button"
@@ -464,7 +460,7 @@ const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) =>
                     : 'bg-gradient-to-br from-white to-gray-50 hover:bg-green-50 hover:scale-105 active:bg-green-100 border-gray-200 hover:border-green-300 shadow-md'
                 }`}
               >
-                {drink.popular && (
+                {drink.is_popular && (
                   <div className="absolute -top-1 -right-1 bg-orange-500 text-white text-xs px-1 py-0.5 rounded-full font-bold">
                     🔥
                   </div>

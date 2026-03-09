@@ -13,6 +13,7 @@ import { useAuth } from './hooks/useAuth';
 import Auth from './components/Auth';
 import ChaiLytics from './components/ChaiLytics';
 import ManagePricesModal from './components/ManagePricesModal';
+import AddDrinkModal from './components/AddDrinkModal';
 import type { LeaderboardEntry } from './components/Leaderboard';
 
 interface Session {
@@ -54,6 +55,7 @@ function App() {
   const [kettleClicks, setKettleClicks] = useState(0);
   const [showAdminMenu, setShowAdminMenu] = useState(false);
   const [showManagePricesModal, setShowManagePricesModal] = useState(false);
+  const [showAddDrinkModal, setShowAddDrinkModal] = useState(false);
   const adminMenuRef = useRef<HTMLDivElement>(null);
   const [topBuyers, setTopBuyers] = useState<LeaderboardEntry[]>([]);
   const [topDrinkers, setTopDrinkers] = useState<LeaderboardEntry[]>([]);
@@ -341,7 +343,8 @@ function App() {
   const handleKettleClick = () => {
     const canAddUser = profile?.permissions.includes('can_add_user');
     const canManagePrices = profile?.permissions.includes('can_manage_prices');
-    if (canAddUser || canManagePrices) {
+    const canAddDrink = profile?.permissions.includes('can_add_drink');
+    if (canAddUser || canManagePrices || canAddDrink) {
       const newClicks = kettleClicks + 1;
       setKettleClicks(newClicks);
       if (newClicks >= 5) {
@@ -565,6 +568,14 @@ function App() {
                     💰 Manage Prices
                   </button>
                 )}
+                {profile?.permissions.includes('can_add_drink') && (
+                  <button
+                    className="w-full px-4 py-3 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    onClick={() => { setShowAddDrinkModal(true); setShowAdminMenu(false); }}
+                  >
+                    🍵 Add Drink
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -716,6 +727,12 @@ function App() {
       <ManagePricesModal
         isOpen={showManagePricesModal}
         onClose={() => setShowManagePricesModal(false)}
+      />
+
+      <AddDrinkModal
+        isOpen={showAddDrinkModal}
+        onClose={() => setShowAddDrinkModal(false)}
+        onDrinkAdded={() => setShowAddDrinkModal(false)}
       />
 
       <PinModal

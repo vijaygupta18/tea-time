@@ -43,3 +43,47 @@ ALTER TYPE permission ADD VALUE IF NOT EXISTS 'can_manage_prices';
 INSERT INTO role_permissions (role_id, permission)
 SELECT id, 'can_manage_prices' FROM roles WHERE name = 'admin'
 ON CONFLICT DO NOTHING;
+
+-- Drinks table (makes drink types data-driven)
+CREATE TABLE drinks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL UNIQUE,
+  emoji TEXT NOT NULL DEFAULT '🍵',
+  is_popular BOOLEAN NOT NULL DEFAULT false,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Seed existing hardcoded drinks
+INSERT INTO drinks (name, emoji, is_popular) VALUES
+  ('Tea', '🍵', true),
+  ('Coffee', '☕', true),
+  ('Black Coffee', '☕', false),
+  ('Black Tea', '🍵', false),
+  ('Lemon Tea', '🍋', false),
+  ('Plain Milk', '🥛', false),
+  ('Badam Milk', '🥛', false);
+
+-- Add permission for adding drinks
+-- IMPORTANT: Run these two statements separately (in separate SQL editor executions).
+
+-- Step 1: Run this first.
+ALTER TYPE permission ADD VALUE IF NOT EXISTS 'can_add_drink';
+
+-- Step 2: Run this in a separate execution after Step 1 completes.
+INSERT INTO role_permissions (role_id, permission)
+SELECT id, 'can_add_drink' FROM roles WHERE name = 'admin'
+ON CONFLICT DO NOTHING;
+
+-- Add user_name and role_name columns to user_roles
+ALTER TABLE user_roles ADD COLUMN user_name TEXT;
+ALTER TABLE user_roles ADD COLUMN role_name TEXT;
+
+-- Backfill from joined tables
+UPDATE user_roles ur
+SET
+  user_name = u.name,
+  role_name = r.name
+FROM users u, roles r
+WHERE ur.user_id = u.id
+  AND ur.role_id = r.id;

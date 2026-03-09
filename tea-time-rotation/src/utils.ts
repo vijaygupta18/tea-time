@@ -1,3 +1,9 @@
+export interface Drink {
+  name: string;
+  emoji: string;
+  is_popular: boolean;
+}
+
 export interface DrinkPrice {
   drink_type: string;
   sugar_level: string;

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../hooks/useAuth';
+import type { Drink } from '../utils';
 
 interface DrinkPrice {
   id: string;
@@ -14,12 +15,12 @@ interface ManagePricesModalProps {
   onClose: () => void;
 }
 
-const DRINK_TYPES = ['Tea', 'Coffee', 'Black Coffee', 'Black Tea', 'Lemon Tea', 'Plain Milk', 'Badam Milk', '*'];
 const SUGAR_LEVELS = ['No Sugar', 'Less', 'Normal', '*'];
 
 const ManagePricesModal = ({ isOpen, onClose }: ManagePricesModalProps) => {
   const { profile } = useAuth();
   const [prices, setPrices] = useState<DrinkPrice[]>([]);
+  const [drinks, setDrinks] = useState<Drink[]>([]);
   const [newDrink, setNewDrink] = useState('Tea');
   const [newSugar, setNewSugar] = useState('Normal');
   const [newPrice, setNewPrice] = useState('');
@@ -32,12 +33,12 @@ const ManagePricesModal = ({ isOpen, onClose }: ManagePricesModalProps) => {
   }, [isOpen]);
 
   const fetchPrices = async () => {
-    const { data } = await supabase
-      .from('drink_prices')
-      .select('*')
-      .order('drink_type')
-      .order('sugar_level');
-    if (data) setPrices(data as DrinkPrice[]);
+    const [pricesResult, drinksResult] = await Promise.all([
+      supabase.from('drink_prices').select('*').order('drink_type').order('sugar_level'),
+      supabase.from('drinks').select('name, emoji, is_popular').eq('is_active', true).order('name'),
+    ]);
+    if (pricesResult.data) setPrices(pricesResult.data as DrinkPrice[]);
+    if (drinksResult.data) setDrinks(drinksResult.data as Drink[]);
   };
 
   if (!isOpen || !profile?.permissions.includes('can_manage_prices')) return null;
@@ -131,7 +132,7 @@ const ManagePricesModal = ({ isOpen, onClose }: ManagePricesModalProps) => {
                   onChange={e => setNewDrink(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 mt-1"
                 >
-                  {DRINK_TYPES.map(d => (
+                  {[...drinks.map(d => d.name), '*'].map(d => (
                     <option key={d} value={d}>{d === '*' ? '* (wildcard)' : d}</option>
                   ))}
                 </select>
