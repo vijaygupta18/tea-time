@@ -466,9 +466,13 @@ const OrderForm = ({ session, orders, users, guestOrders, onOrderUpdate }: Order
                     </div>
                   )}
                   
-                  {user.roles.includes('admin') && (
+                  {user.roles.includes('super_admin') ? (
+                    <div className="absolute top-1 right-1">
+                      🛠️
+                    </div>
+                  ) : user.roles.includes('admin') && (
                     <div className="absolute top-1 right-1 text-yellow-400">
-                      👑
+                      💎
                     </div>
                   )}
                   {hasOrdered && !isSelected && (
