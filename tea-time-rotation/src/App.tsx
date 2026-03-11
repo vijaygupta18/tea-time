@@ -27,6 +27,16 @@ interface Order {
   sugar_level: string;
 }
 
+interface GuestOrder {
+  id: string;
+  session_id: string;
+  billed_to: string;
+  drink_type: string;
+  sugar_level: string;
+  guest_label?: string;
+  created_at: string;
+}
+
 interface User {
   id:string;
   name: string;
@@ -46,6 +56,7 @@ function App() {
   const { session: authSession, profile, loading } = useAuth();
   const [session, setSession] = useState<Session | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [guestOrders, setGuestOrders] = useState<GuestOrder[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [lastAssignee, setLastAssignee] = useState<string | null>(null);
   const [totalSessions, setTotalSessions] = useState(0);
@@ -159,11 +170,13 @@ function App() {
 
   useEffect(() => {
     const fetchAllData = async (currentSession: Session) => {
-      const [ordersData, usersData] = await Promise.all([
+      const [ordersData, usersData, guestOrdersData] = await Promise.all([
         supabase.from('orders').select('*').eq('session_id', currentSession.id),
         supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, profile_picture_url, total_drinks_bought, drink_count, total_cost_sponsored, total_cost_consumed, last_assigned_at, isActive, roles:user_roles(roles(name))'),
+        supabase.from('guest_orders').select('*').eq('session_id', currentSession.id),
       ]);
       if (ordersData.data) setOrders(ordersData.data);
+      if (guestOrdersData.data) setGuestOrders(guestOrdersData.data as GuestOrder[]);
       if (usersData.data) {
           const transformedUsers = usersData.data.map(user => {
               const roles = Array.isArray(user.roles)
@@ -263,11 +276,13 @@ function App() {
 
   // Function to fetch all data for a session
   const fetchAllData = async (currentSession: Session) => {
-    const [ordersData, usersData] = await Promise.all([
+    const [ordersData, usersData, guestOrdersData] = await Promise.all([
       supabase.from('orders').select('*').eq('session_id', currentSession.id),
       supabase.from('users').select('id, name, last_ordered_drink, last_sugar_level, profile_picture_url, total_drinks_bought, drink_count, total_cost_sponsored, total_cost_consumed, last_assigned_at, isActive, roles:user_roles(roles(name))'),
+      supabase.from('guest_orders').select('*').eq('session_id', currentSession.id),
     ]);
     if (ordersData.data) setOrders(ordersData.data);
+    if (guestOrdersData.data) setGuestOrders(guestOrdersData.data as GuestOrder[]);
     if (usersData.data) {
         const transformedUsers = usersData.data.map(user => {
             const roles = Array.isArray(user.roles)
@@ -279,7 +294,7 @@ function App() {
     }
   };
 
-  // Separate useEffect for orders listener that depends on session
+  // Separate useEffect for orders + guest_orders listeners that depend on session
   useEffect(() => {
     if (!session) return;
 
@@ -294,11 +309,23 @@ function App() {
       )
       .subscribe();
 
+    const guestOrdersListener = supabase
+      .channel('guest_orders')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'guest_orders' },
+        () => {
+          fetchAllData(session);
+        }
+      )
+      .subscribe();
+
     // Fetch initial data for this session
     fetchAllData(session);
 
     return () => {
       supabase.removeChannel(ordersListener);
+      supabase.removeChannel(guestOrdersListener);
     };
   }, [session]);
 
@@ -595,6 +622,7 @@ function App() {
                     session={session}
                     orders={orders}
                     users={users}
+                    guestOrders={guestOrders}
                     onOrderUpdate={() => fetchAllData(session)}
                   />
                 </div>

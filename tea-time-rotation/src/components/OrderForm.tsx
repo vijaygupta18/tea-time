@@ -25,18 +25,35 @@ interface Order {
   sugar_level: string;
 }
 
+interface GuestOrder {
+  id: string;
+  session_id: string;
+  billed_to: string;
+  drink_type: string;
+  sugar_level: string;
+  guest_label?: string;
+  created_at: string;
+}
+
 interface OrderFormProps {
   session: {
     id: string;
   };
   orders: Order[];
   users: User[];
+  guestOrders: GuestOrder[];
   onOrderUpdate?: () => void;
 }
 
 const LONG_PRESS_DURATION = 2000; // 2 seconds
 
-const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) => {
+const SUGAR_LEVELS = [
+  { level: 'No Sugar', emoji: '🚫' },
+  { level: 'Less', emoji: '🤏🏽' },
+  { level: 'Normal', emoji: '🍯' },
+];
+
+const OrderForm = ({ session, orders, users, guestOrders, onOrderUpdate }: OrderFormProps) => {
   const { profile } = useAuth();
   const [selectedUser, setSelectedUser] = useState('');
   const [drinkType, setDrinkType] = useState('Tea');
@@ -52,6 +69,13 @@ const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) =>
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const longPressTriggeredRef = useRef(false);
   const [showUserStats, setShowUserStats] = useState<User | null>(null);
+
+  // Guest drink form state
+  const [showGuestForm, setShowGuestForm] = useState(false);
+  const [guestBilledTo, setGuestBilledTo] = useState('');
+  const [guestDrinkType, setGuestDrinkType] = useState('Tea');
+  const [guestSugarLevel, setGuestSugarLevel] = useState('Normal');
+  const [guestLabel, setGuestLabel] = useState('');
 
   useEffect(() => {
     supabase.from('drink_prices').select('*').then(({ data }) => {
@@ -283,6 +307,50 @@ const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) =>
     }
   };
 
+  const handleAddGuestDrink = async () => {
+    if (!guestBilledTo) {
+      showError('Selection Required', 'Please select a user to bill this guest drink to.');
+      return;
+    }
+    const { error } = await supabase.from('guest_orders').insert({
+      session_id: session.id,
+      billed_to: guestBilledTo,
+      drink_type: guestDrinkType,
+      sugar_level: guestSugarLevel,
+      guest_label: guestLabel || null,
+    });
+    if (error) {
+      console.error('Error adding guest drink:', error);
+      showError('Failed', 'Could not add guest drink. Please try again.');
+      return;
+    }
+    setGuestBilledTo('');
+    setGuestDrinkType('Tea');
+    setGuestSugarLevel('Normal');
+    setGuestLabel('');
+    setShowGuestForm(false);
+    if (onOrderUpdate) onOrderUpdate();
+    showSuccess('Guest Drink Added', 'The guest drink has been added successfully.');
+  };
+
+  const handleRemoveGuestOrder = async (id: string) => {
+    showConfirm(
+      'Remove Guest Drink?',
+      'Are you sure you want to remove this guest drink?',
+      async () => {
+        const { error } = await supabase.from('guest_orders').delete().eq('id', id);
+        if (error) {
+          console.error('Error removing guest order:', error);
+          showError('Failed', 'Could not remove guest drink. Please try again.');
+          return;
+        }
+        if (onOrderUpdate) onOrderUpdate();
+      },
+      'Remove',
+      'Cancel'
+    );
+  };
+
   return (
     <div ref={topOfPageRef} className="space-y-10">
       {/* Progress Header */}
@@ -336,6 +404,11 @@ const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) =>
           <div className="text-sm sm:text-base text-gray-600">
             {submittedUsers.length} of {totalUsers} people have submitted their orders
           </div>
+          {guestOrders.length > 0 && (
+            <div className="text-sm text-purple-600 font-medium">
+              + {guestOrders.length} guest drink{guestOrders.length > 1 ? 's' : ''}
+            </div>
+          )}
         </div>
         
         <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Place Your Order</h2>
@@ -488,11 +561,7 @@ const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) =>
           </div>
           
           <div className="grid grid-cols-3 gap-2">
-            {[
-              { level: 'No Sugar', emoji: '🚫', color: 'accent' },
-              { level: 'Less', emoji: '🤏🏽', color: 'secondary' },
-              { level: 'Normal', emoji: '🍯', color: 'primary' }
-            ].map((sugar) => (
+            {SUGAR_LEVELS.map((sugar) => (
               <button
                 key={sugar.level}
                 type="button"
@@ -559,6 +628,169 @@ const OrderForm = ({ session, orders, users, onOrderUpdate }: OrderFormProps) =>
           </div>
         </div>
       </form>
+
+      {/* Guest Drinks Section (admin only) */}
+      {profile?.permissions.includes('can_manage_guest_drinks') && (
+        <div className="space-y-4 border-t-2 border-purple-100 pt-6 animate-slide-up">
+          <div className="text-center">
+            <h3 className="text-base sm:text-lg font-bold text-gray-800 flex items-center justify-center">
+              <span className="mr-2 text-xl">👤</span>
+              Guest Drinks
+            </h3>
+          </div>
+
+          {/* Existing guest orders list */}
+          {guestOrders.length > 0 && (
+            <div className="space-y-2">
+              {guestOrders.map((go) => {
+                const billedUser = users.find(u => u.id === go.billed_to);
+                const drink = drinks.find(d => d.name === go.drink_type);
+                const price = resolvePrice(go.drink_type, go.sugar_level, drinkPrices);
+                return (
+                  <div key={go.id} className="flex items-center justify-between bg-purple-50 border border-purple-200 rounded-xl px-4 py-2 text-sm">
+                    <span className="font-medium text-gray-800">
+                      {drink?.emoji || '🍵'} {go.drink_type} / {go.sugar_level}
+                      {go.guest_label && <span className="text-gray-500 ml-1">({go.guest_label})</span>}
+                    </span>
+                    <span className="text-gray-600 mx-2">→ {billedUser?.name || 'Unknown'}</span>
+                    <span className="text-green-700 font-semibold mr-2">₹{price}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveGuestOrder(go.id)}
+                      className="text-red-500 hover:text-red-700 transition-colors"
+                      aria-label="Remove guest drink"
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Toggle form button */}
+          {!showGuestForm && (
+            <button
+              type="button"
+              onClick={() => setShowGuestForm(true)}
+              className="w-full py-3 px-4 border-2 border-dashed border-purple-300 text-purple-700 font-semibold rounded-xl hover:bg-purple-50 transition-all duration-200"
+            >
+              + Add Guest Drink
+            </button>
+          )}
+
+          {/* Inline guest drink form */}
+          {showGuestForm && (
+            <div className="bg-purple-50 border-2 border-purple-200 rounded-2xl p-4 space-y-4 animate-slide-up">
+              {/* Bill to */}
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-gray-700">Bill to:</label>
+                <select
+                  value={guestBilledTo}
+                  onChange={(e) => setGuestBilledTo(e.target.value)}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm font-medium text-gray-800 focus:outline-none focus:border-purple-400"
+                >
+                  <option value="">Select a user...</option>
+                  {users.filter(u => u.isActive).sort((a, b) => a.name.localeCompare(b.name)).map(u => (
+                    <option key={u.id} value={u.id}>{u.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Optional label */}
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-gray-700">Label (optional):</label>
+                <input
+                  type="text"
+                  value={guestLabel}
+                  onChange={(e) => setGuestLabel(e.target.value)}
+                  placeholder="e.g. Rahul's friend"
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-purple-400"
+                />
+              </div>
+
+              {/* Drink type */}
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-gray-700">Drink:</label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {drinks.map((drink) => (
+                    <button
+                      key={drink.name}
+                      type="button"
+                      onClick={() => setGuestDrinkType(drink.name)}
+                      className={`relative p-2 rounded-lg text-center transition-all duration-200 border-2 flex flex-col items-center justify-center touch-manipulation ${
+                        guestDrinkType === drink.name
+                          ? 'bg-gradient-to-br from-purple-500 to-purple-600 text-white border-purple-600 scale-105'
+                          : 'bg-white border-gray-200 hover:border-purple-300 hover:bg-purple-50'
+                      }`}
+                    >
+                      <div className="text-lg mb-0.5">{drink.emoji}</div>
+                      <div className={`font-semibold text-xs ${guestDrinkType === drink.name ? 'text-white' : 'text-gray-800'}`}>
+                        {drink.name}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Sugar level */}
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-gray-700">Sugar:</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {SUGAR_LEVELS.map((sugar) => (
+                    <button
+                      key={sugar.level}
+                      type="button"
+                      onClick={() => setGuestSugarLevel(sugar.level)}
+                      className={`py-2 px-3 rounded-lg font-semibold text-xs transition-all duration-200 border-2 flex flex-col items-center touch-manipulation ${
+                        guestSugarLevel === sugar.level
+                          ? 'bg-gradient-to-br from-purple-500 to-purple-600 text-white border-purple-600 scale-105'
+                          : 'bg-white border-gray-200 hover:border-purple-300 hover:bg-purple-50 text-gray-800'
+                      }`}
+                    >
+                      <span className="text-base mb-0.5">{sugar.emoji}</span>
+                      {sugar.level}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Price preview */}
+              {drinkPrices.length > 0 && (
+                <div className="text-center">
+                  <span className="inline-block bg-purple-100 border border-purple-200 rounded-full px-4 py-1 text-sm font-semibold text-purple-800">
+                    💰 Price: ₹{resolvePrice(guestDrinkType, guestSugarLevel, drinkPrices)}
+                  </span>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={handleAddGuestDrink}
+                  className="flex-1 py-3 px-4 bg-gradient-to-r from-purple-500 to-purple-600 text-white font-bold rounded-xl hover:from-purple-600 hover:to-purple-700 transition-all duration-200 shadow-lg text-sm"
+                >
+                  Add Guest Drink
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowGuestForm(false);
+                    setGuestBilledTo('');
+                    setGuestDrinkType('Tea');
+                    setGuestSugarLevel('Normal');
+                    setGuestLabel('');
+                  }}
+                  className="flex-1 py-3 px-4 bg-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-300 transition-all duration-200 text-sm"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Modal System */}
       {config && (

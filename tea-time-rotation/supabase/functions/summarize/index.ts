@@ -116,6 +116,13 @@ Deno.serve(async (req) => {
     summarizerUserId = summarizer?.id ?? null;
   }
 
+  // Fetch guest orders for this session
+  const { data: guestOrdersData } = await supabase
+    .from('guest_orders')
+    .select('*')
+    .eq('session_id', session_id);
+  const allGuestOrders = guestOrdersData || [];
+
   // Atomic update: only succeeds if status is still 'active'
   const { data: updatedSession, error: sessionUpdateError } = await supabase
     .from('sessions')
@@ -123,7 +130,7 @@ Deno.serve(async (req) => {
       status: 'completed',
       ended_at: new Date().toISOString(),
       assignee_name: assignee.name,
-      total_drinks_in_session: orders.length,
+      total_drinks_in_session: orders.length + allGuestOrders.length,
       summarized_by: summarizerUserId,
     })
     .eq('id', session_id)
@@ -186,15 +193,25 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Increment drink_count and total_cost_consumed for guest orders (billed to sponsoring user)
+  for (const guestOrder of allGuestOrders) {
+    await supabase.rpc('increment_drink_count', { user_id: guestOrder.billed_to });
+    const price = resolvePrice(guestOrder.drink_type, guestOrder.sugar_level, prices);
+    await supabase.rpc('increment_total_cost_consumed', { p_user_id: guestOrder.billed_to, p_amount: price });
+  }
+
   await supabase
     .from('users')
     .update({ last_assigned_at: new Date().toISOString() })
     .eq('id', assignee.id);
 
-  await supabase.rpc('increment_total_drinks_bought', { p_user_id: assignee.id, p_amount: orders.length });
+  const totalDrinks = orders.length + allGuestOrders.length;
+  await supabase.rpc('increment_total_drinks_bought', { p_user_id: assignee.id, p_amount: totalDrinks });
 
-  // Increment total_cost_sponsored for assignee (total session cost)
-  const totalSessionCost = orders.reduce((sum, order) => sum + resolvePrice(order.drink_type, order.sugar_level, prices), 0);
+  // Increment total_cost_sponsored for assignee (total session cost including guest drinks)
+  const regularCost = orders.reduce((sum, order) => sum + resolvePrice(order.drink_type, order.sugar_level, prices), 0);
+  const guestCost = allGuestOrders.reduce((sum, go) => sum + resolvePrice(go.drink_type, go.sugar_level, prices), 0);
+  const totalSessionCost = regularCost + guestCost;
   await supabase.rpc('increment_total_cost_sponsored', { p_user_id: assignee.id, p_amount: totalSessionCost });
 
   return new Response(JSON.stringify({ assignee, committed: true }), {
